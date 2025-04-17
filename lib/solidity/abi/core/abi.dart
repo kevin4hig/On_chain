@@ -26,6 +26,12 @@ abstract class ABICoder<T> {
   /// Factory method to create an ABICoder instance based on the provided type string.
   factory ABICoder.fromType(String type) {
     String? correctType;
+
+    // Detect fixed-size uint256[N]
+    if (RegExp(r'^uint256\[\d+\]$').hasMatch(type)) {
+      return Uint256FixedArrayCoder() as ABICoder<T>;
+    }
+
     // Check for array, bytes, and numeric types
     if (type.endsWith(']')) {
       correctType = 'array';
@@ -146,8 +152,10 @@ class AbiParameter {
 
   /// Encodes the given value using the ABI encoding.
   EncoderResult abiEncode(dynamic value) {
-    final abi = ABICoder.fromType(type);
-    return abi.abiEncode(this, value);
+    ABICoder abi = ABICoder.fromType(type);
+    EncoderResult result = abi.abiEncode(this, value);
+    log("EncoderResult ${result.name} ${result.isDynamic} ${result.encoded} (Value antes del encode $value) ${abi} PARAMS: ${name} ${type}");
+    return result;
   }
 
   /// Decodes the byte array using the specified ABI decoding.
@@ -210,5 +218,58 @@ class DecoderResult<T> {
   @override
   String toString() {
     return 'consumed $consumed result $result';
+  }
+}
+
+class Uint256FixedArrayCoder implements ABICoder<List<BigInt>> {
+  const Uint256FixedArrayCoder();
+
+  @override
+  EncoderResult abiEncode(AbiParameter params, List<BigInt> input) {
+    final regex = RegExp(r'^uint256\[(\d+)\]$');
+    final match = regex.firstMatch(params.type);
+    if (match == null) {
+      throw SolidityAbiException("Invalid type for fixed uint256 array",
+          details: {'type': params.type});
+    }
+
+    final expectedLength = int.parse(match.group(1)!);
+    if (input.length != expectedLength) {
+      throw SolidityAbiException("Invalid length for fixed uint256 array",
+          details: {'expected': expectedLength, 'actual': input.length});
+    }
+
+    final encoded = input.expand((val) {
+      return BigintUtils.toBytes(val, length: 32);
+    }).toList();
+
+    return EncoderResult(isDynamic: false, encoded: encoded, name: params.name);
+  }
+
+  @override
+  DecoderResult<List<BigInt>> decode(AbiParameter params, List<int> bytes) {
+    final regex = RegExp(r'^uint256\[(\d+)\]$');
+    final match = regex.firstMatch(params.type);
+    if (match == null) {
+      throw SolidityAbiException("Invalid type for fixed uint256 array",
+          details: {'type': params.type});
+    }
+
+    final count = int.parse(match.group(1)!);
+    final result = <BigInt>[];
+    for (int i = 0; i < count; i++) {
+      final chunk = bytes.sublist(i * 32, (i + 1) * 32);
+      final big = BigintUtils.fromBytes(chunk, sign: false);
+      result.add(big);
+    }
+
+    return DecoderResult(
+        result: result, consumed: count * 32, name: params.name);
+  }
+
+  @override
+  EncoderResult legacyEip712Encode(
+      AbiParameter params, List<BigInt> input, bool keepSize) {
+    return abiEncode(params, input);
   }
 }
