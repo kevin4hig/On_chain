@@ -154,7 +154,6 @@ class AbiParameter {
   EncoderResult abiEncode(dynamic value) {
     ABICoder abi = ABICoder.fromType(type);
     EncoderResult result = abi.abiEncode(this, value);
-    log("EncoderResult ${result.name} ${result.isDynamic} ${result.encoded} (Value antes del encode $value) ${abi} PARAMS: ${name} ${type}");
     return result;
   }
 
